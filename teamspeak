@@ -102,6 +102,9 @@ foreach ($ts3 -> channellist()) {
 
 my $users_away_count = 0;
 foreach ($ts3 -> clientlist("-away")){
+	unless ($_ =~ /client_type=0/) {
+		$users_count -= 1;
+	}
 	if ($_ =~ /client_type=0/ and ($_ =~ /client_away=1/ or $_ =~ /cid=$awaychannel_cid/)) {
 		$users_away_count += 1;
 	}
