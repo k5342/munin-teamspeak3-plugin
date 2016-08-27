@@ -1,0 +1,118 @@
+#!/usr/bin/perl -w
+
+use Munin::Plugin;
+use Encode;
+
+my $host     = $ENV{'TEAMSPEAK3_HOST'}           || '127.0.0.1';
+my $sport    = $ENV{'TEAMSPEAK3_PORT'}           || 9987;
+my $port     = $ENV{'TEAMSPEAK3_QUERY_PORT'}     || 10011;
+my $id       = $ENV{'TEAMSPEAK3_QUERY_ID'}       or die('TeamSpeak3 query ID is not set');
+my $password = $ENV{'TEAMSPEAK3_QUERY_PASSWORD'} or die('TeamSpeak3 query PassWord is not set');
+
+if (defined($ARGV[0])) {
+	if ($ARGV[0] eq 'autoconf') {
+		print "no\n";
+		exit 0;
+	}
+
+	if ( $ARGV[0] eq "config" ) {
+		print "graph_title TeamSpeak3 Connected Users\n";
+		print "graph_order users users_away\n";
+		print "graph_vlabel users\n";
+		print "graph_category teamspeak\n";
+		print "users.label Users\n";
+		print "users.draw LINE1\n";
+		print "users.colour 00FF00\n";
+		print "users_away.label Away\n";
+		print "users_away.draw AREASTACK\n";
+		print "users_away.colour AAAAAA\n";
+		
+		exit 0;
+	}
+}
+
+{
+	package TeamSpeak3;
+	use IO::Socket::INET;
+	
+	sub new {
+		my $class = shift;
+		my $self = { @_ };
+		
+		$self -> {Socket} = IO::Socket::INET -> new(PeerHost => $self -> {Host}, PeerPort => $self -> {Port}) or die $!;
+		
+		return bless($self, $class);
+	}
+	
+	sub query {
+		my $self = shift;
+		my $command_str = shift;
+		
+		my $socket = $self -> {Socket};
+		$socket -> say($command_str);
+		
+		my $server_result;
+		while ($data = <$socket>) {
+			my $return_str = Encode::find_encoding('utf-8') -> decode($data);
+			if ($return_str =~ /error id=(\d+) msg=(.+)/) {
+				if ($1 == 0) {
+					return $server_result;
+				} else {
+					die("Server Communication Error: ", $2);
+				}
+			} else {
+				$server_result = $return_str;
+			}
+		}
+		die("No Results found");
+	}
+	
+	sub list_query {
+		$self = shift;
+		return split(/\|/, $self -> query(join(" ", @_)));
+	}
+	
+	sub clientlist {
+		$self = shift;
+		return $self -> list_query("clientlist", @_);
+	}
+	sub channellist {
+		$self = shift;
+		return $self -> list_query("channellist", @_);
+	}
+}
+
+my $users_count;
+my $awaychannel_cid;
+
+$ts3 = TeamSpeak3 -> new(Host => $host, Port => $port);
+$ts3 -> query("login $id $password");
+$ts3 -> query("use port=$sport");
+
+if ($ts3 -> query("serverinfo") =~ /virtualserver_clientsonline=(\d+)/) {
+	$users_count = $1;
+}
+
+foreach ($ts3 -> channellist()) {
+	if ($_ =~ /cid=(\d+) pid=\d+ channel_order=\d+ channel_name=.*afk.*/) {
+		$awaychannel_cid = $1;
+		last;
+	}
+}
+
+my $users_away_count = 0;
+foreach ($ts3 -> clientlist("-away")){
+	if ($_ =~ /client_type=0/ and ($_ =~ /client_away=1/ or $_ =~ /cid=$awaychannel_cid/)) {
+		$users_away_count += 1;
+	}
+}
+
+if ($ts3 -> query("channelinfo cid=$awaychannel_cid") =~ /virtual/) {
+}
+
+print "users.value",      " ", $users_count,      "\n";
+print "users_away.value", " ", $users_away_count, "\n";
+
+exit 0;
+
+# vim:syntax=perl
